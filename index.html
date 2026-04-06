@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Artist Manager v12.0</title>
+    <meta name="description" content="A lightweight, local-first AI Artist & Prompt Manager. Organize, combine, and preview your artist styles seamlessly.">
+    <meta name="author" content="desperati0n">
+    <meta property="og:title" content="AI Artist Manager v12.0">
+    <meta property="og:description" content="A lightweight, local-first AI Artist & Prompt Manager for Stable Diffusion and NovelAI.">
+    <meta property="og:url" content="https://desperati0n.github.io/ai-artist-tool/">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236366f1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z'/%3E%3Cpath d='m15 5 4 4'/%3E%3C/svg%3E">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script>
@@ -43,14 +49,46 @@
         .main-area { flex: 1; display: flex; flex-direction: column; border-radius: 1.5rem; overflow: hidden; position: relative; }
         .sidebar-right { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; border-radius: 1.5rem; overflow: hidden; }
 
-        .card-selected { ring: 3px solid #6366f1; transform: scale(0.96); }
-        .dark .card-selected { ring: 3px solid #818cf8; }
-        .batch-selected { ring: 3px solid #ef4444; transform: scale(0.96); }
+        .card-selected { outline: 3px solid #6366f1; outline-offset: 2px; transform: scale(0.96); }
+        .dark .card-selected { outline: 3px solid #818cf8; outline-offset: 2px; }
+        .batch-selected { outline: 3px solid #ef4444; outline-offset: 2px; transform: scale(0.96); }
         .capsule-bg { transition: all 0.3s ease; }
+
+        .artist-drag-item { cursor: grab; transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease; }
+        .artist-drag-item:active { cursor: grabbing; }
+        .artist-drag-item.dragging { opacity: 0.4; transform: scale(0.96); }
+        .artist-drag-item.drag-over-top { border-top: 2px solid #6366f1 !important; }
+        .artist-drag-item.drag-over-bottom { border-bottom: 2px solid #6366f1 !important; }
+        .artist-drag-handle { cursor: grab; color: #94a3b8; transition: color 0.15s ease; }
+        .artist-drag-handle:hover { color: #6366f1; }
+        .artist-move-btn { padding: 2px; border-radius: 4px; color: #94a3b8; transition: all 0.15s ease; display: flex; align-items: center; justify-content: center; }
+        .artist-move-btn:hover { color: #6366f1; background: rgba(99,102,241,0.1); }
+        .artist-move-btn:disabled { opacity: 0.2; pointer-events: none; }
 
         @media (max-width: 1280px) { .sidebar-right { width: 300px; } .sidebar-left { width: 200px; } }
         @media (max-width: 1024px) { .sidebar-right { display: none; } }
         @media (max-width: 768px) { .sidebar-left { display: none; } .layout-container { flex-direction: column; } }
+
+        #artist-preview-tooltip {
+            position: fixed; z-index: 200; pointer-events: none; display: none;
+            width: 180px; border-radius: 16px; overflow: hidden;
+            box-shadow: 0 20px 40px -8px rgba(0,0,0,0.35);
+            background: rgba(255,255,255,0.95); backdrop-filter: blur(16px);
+            border: 1px solid rgba(255,255,255,0.5);
+            opacity: 0; transition: opacity 0.18s ease;
+        }
+        .dark #artist-preview-tooltip { background: rgba(15,23,42,0.95); border-color: rgba(255,255,255,0.08); }
+        #artist-preview-tooltip.show { display: block; opacity: 1; }
+        #artist-preview-tooltip img { width: 100%; aspect-ratio: 3/4; object-fit: cover; display: block; }
+        #artist-preview-tooltip .preview-label { padding: 8px 12px; font-size: 11px; font-weight: 700; color: #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .dark #artist-preview-tooltip .preview-label { color: #e2e8f0; }
+        #artist-preview-tooltip .preview-pct { font-size: 10px; color: #94a3b8; font-weight: 600; margin-left: 4px; }
+        .pie-canvas-wrap { position: relative; }
+        .ghost-artist { opacity: 0.6; border: 1px dashed #94a3b8 !important; background: repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(148,163,175,0.06) 4px, rgba(148,163,175,0.06) 8px) !important; }
+        .dark .ghost-artist { border-color: #475569 !important; background: repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(71,85,105,0.15) 4px, rgba(71,85,105,0.15) 8px) !important; }
+        .ghost-artist .ghost-badge { display: inline-flex; align-items: center; gap: 2px; font-size: 9px; font-weight: 700; color: #f59e0b; background: rgba(245,158,11,0.12); padding: 1px 6px; border-radius: 6px; margin-left: 4px; }
+        .import-prompt-btn { transition: all 0.2s ease; }
+        .import-prompt-btn:hover { transform: scale(1.02); }
     </style>
 </head>
 <body>
@@ -58,6 +96,7 @@
     <div id="app"></div>
     <div id="modal-container"></div>
     <div id="toast-container" class="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none"></div>
+    <div id="artist-preview-tooltip"></div>
 
     <script>
         // =========================================
@@ -137,6 +176,7 @@
             page: 1,
             pageSize: 24,
             selected: {}, 
+            selectedOrder: [], // explicit order for selected artists
             batchMode: false,
             batchSelected: {}, 
             promptFormat: 'webui',
@@ -198,13 +238,22 @@
                     if (state.viewMode === 'presets') {
                         const p = state.presets.find(x => x.id === id);
                         if(p && p.items) {
-                            p.items.forEach(item => { state.selected[item.id] = item.weight || 1.0; });
+                            p.items.forEach(item => {
+                                state.selected[item.id] = item.weight || 1.0;
+                                if (!state.selectedOrder.includes(item.id)) state.selectedOrder.push(item.id);
+                            });
                             renderSidebarRight();
                             showToast(`已加载预设: ${p.name}`);
                         }
                     } else {
                         const newSel = {...state.selected};
-                        if(newSel[id]) delete newSel[id]; else newSel[id] = 1.0;
+                        if(newSel[id]) {
+                            delete newSel[id];
+                            state.selectedOrder = state.selectedOrder.filter(x => x !== id);
+                        } else {
+                            newSel[id] = 1.0;
+                            state.selectedOrder.push(id);
+                        }
                         state.selected = newSel;
                         updateCardVisual(id);
                         renderSidebarRight();
@@ -303,17 +352,20 @@
                 id = String(id);
                 if(!confirm("确定要删除这位画师吗？")) return;
                 
-                await db.delete(id);
+                try { await db.delete(id); } catch(e) { console.warn('DB delete error:', e); }
                 state.artists = state.artists.filter(a => String(a.id) !== id);
                 
-                if (state.selected[id]) {
-                    const newSel = {...state.selected};
-                    delete newSel[id];
-                    state.selected = newSel;
-                }
+                // 清理所有选中状态
+                delete state.selected[id];
+                delete state.batchSelected[id];
+                delete state.pageImages[id];
+                
+                // 隐藏可能存在的预览提示
+                hideArtistPreview();
+                _hoveredPieIdx = -1;
                 
                 actions.saveMeta();
-                renderAll(); // 刷新
+                try { renderAll(); } catch(e) { console.error('Render error after delete:', e); }
                 showToast("已删除");
             },
 
@@ -534,9 +586,162 @@
             setPage: (p) => {
                 state.page = p;
                 renderGrid();
-                const container = document.getElementById('grid-container');
-                if(container) container.scrollTop = 0;
             }
+        };
+
+        // =========================================
+        // 画师串解析 (Parse Prompt Input)
+        // =========================================
+
+        // Strip "artist:" prefix that NAI allows as a tag qualifier
+        // e.g. "artist:pikazo_mika" → "pikazo_mika"
+        const stripArtistPrefix = (raw) => raw.trim().replace(/^artist:\s*/i, '').trim();
+
+        const parsePromptInput = (text) => {
+            text = text.trim();
+            if (!text) return [];
+            const results = []; // { tag, weight }
+
+            // NAI format uses '::' as delimiter.
+            // Valid forms per spec:
+            //   weight::artist1, artist2::   - weighted group
+            //   artist1, artist2             - bare comma-separated (weight = 1.0)
+            //   Mixed: 0.8::artistA::, artistB, 1.2::artistD, artistE::
+            // Weight MUST be a proper decimal number (≥1 digit before or after dot).
+            // This prevents artist names containing digits from being mis-parsed as weights.
+
+            const hasNaiSyntax = text.includes('::');
+
+            if (hasNaiSyntax) {
+                // Strict weight pattern: requires at least one digit group.
+                // Matches:  0.8::content::   1::content::   1.0::content::
+                // Does NOT match: ::content:: (no leading digits → treated as bare text)
+                // Does NOT match: 1girl::content:: (1girl has letters, regex can't consume past digit)
+                const naiGroupRegex = /(\d+(?:\.\d+)?)\s*::\s*((?:[^:]|:(?!:))+?)\s*::/g;
+                const groupMatches = [];
+                let match;
+
+                while ((match = naiGroupRegex.exec(text)) !== null) {
+                    groupMatches.push({
+                        weight: parseFloat(match[1]),
+                        content: match[2],
+                        start: match.index,
+                        end: match.index + match[0].length
+                    });
+                }
+
+                // Walk through text, collecting bare segments between weighted groups
+                let cursor = 0;
+                for (const gm of groupMatches) {
+                    if (gm.start > cursor) {
+                        // Bare text before this weighted group
+                        const bareText = text.slice(cursor, gm.start).trim().replace(/^[,\s]+|[,\s]+$/g, '');
+                        if (bareText) {
+                            bareText.split(',').forEach(t => {
+                                const tag = stripArtistPrefix(t);
+                                if (tag) results.push({ tag, weight: 1.0 });
+                            });
+                        }
+                    }
+                    // Weighted group
+                    const weight = (isNaN(gm.weight) || gm.weight <= 0) ? 1.0 : Math.round(gm.weight * 10) / 10;
+                    gm.content.split(',').forEach(t => {
+                        const tag = stripArtistPrefix(t);
+                        if (tag) results.push({ tag, weight });
+                    });
+                    cursor = gm.end;
+                }
+                // Trailing bare text after last weighted group
+                if (cursor < text.length) {
+                    const bareText = text.slice(cursor).trim().replace(/^[,\s]+|[,\s]+$/g, '');
+                    if (bareText) {
+                        bareText.split(',').forEach(t => {
+                            const tag = stripArtistPrefix(t);
+                            if (tag) results.push({ tag, weight: 1.0 });
+                        });
+                    }
+                }
+            } else {
+                // No '::' → try WebUI format or plain comma list
+                text.split(',').forEach(token => {
+                    token = token.trim();
+                    if (!token) return;
+                    // WebUI weighted: (tag:1.1)
+                    const webuiMatch = token.match(/^\(\s*(.+?)\s*:\s*([\d.]+)\s*\)$/);
+                    if (webuiMatch) {
+                        const tag = stripArtistPrefix(webuiMatch[1]);
+                        let w = parseFloat(webuiMatch[2]);
+                        if (isNaN(w) || w <= 0) w = 1.0;
+                        if (tag) results.push({ tag, weight: Math.round(w * 10) / 10 });
+                    } else {
+                        const tag = stripArtistPrefix(token.replace(/^\(+|\)+$/g, ''));
+                        if (tag) results.push({ tag, weight: 1.0 });
+                    }
+                });
+            }
+
+            return results;
+        };
+
+        const importFromPromptText = (text) => {
+            const parsed = parsePromptInput(text);
+            if (parsed.length === 0) return showToast('未检测到有效的画师标签');
+
+            // Clear current selection and ghost entries
+            state.selected = {};
+            state.selectedOrder = [];
+            state.artists = state.artists.filter(a => !a._ghost);
+
+            let foundCount = 0;
+            let ghostCount = 0;
+
+            for (const item of parsed) {
+                const needle = item.tag.toLowerCase().trim();
+
+                // Multi-strategy lookup (case-insensitive):
+                // 1. Exact match on tag or name
+                // 2. DB tag has 'artist:' prefix but input doesn't (or vice versa)
+                const findArtist = (q) => state.artists.find(a => {
+                    const dbTag  = (a.tag  || '').toLowerCase().trim();
+                    const dbName = (a.name || '').toLowerCase().trim();
+                    // Strip 'artist:' from DB tag for comparison
+                    const dbTagStripped = dbTag.replace(/^artist:\s*/, '');
+                    return dbTag === q || dbName === q || dbTagStripped === q;
+                });
+
+                let artist = findArtist(needle);
+                // Also try with 'artist:' prefix prepended (in case DB stores "artist:xxx")
+                if (!artist) artist = findArtist('artist:' + needle);
+
+                if (artist) {
+                    const id = String(artist.id);
+                    if (!(id in state.selected)) {
+                        state.selected[id] = item.weight;
+                        state.selectedOrder.push(id);
+                        foundCount++;
+                    }
+                } else {
+                    // Not found → ghost placeholder
+                    const ghostId = '_ghost_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+                    state.artists.push({
+                        id: ghostId,
+                        name: item.tag,
+                        tag: item.tag,
+                        categories: ['未分类'],
+                        danbooruCount: 0,
+                        createdAt: Date.now(),
+                        _ghost: true
+                    });
+                    state.selected[ghostId] = item.weight;
+                    state.selectedOrder.push(ghostId);
+                    ghostCount++;
+                }
+            }
+
+            renderGrid();
+            renderSidebarRight();
+            const msg = `导入完成: ${foundCount} 位已匹配` + (ghostCount > 0 ? `，${ghostCount} 位未找到(占位)` : '');
+            showToast(msg);
         };
 
         const getFilteredList = () => {
@@ -580,6 +785,9 @@
         const renderSidebarLeft = () => {
             const container = document.getElementById('sidebar-left-container');
             if(!container) return;
+            // Save scroll position of the category list before re-render
+            const catListEl = container.querySelector('.flex-1.overflow-y-auto');
+            const savedScrollTop = catListEl ? catListEl.scrollTop : 0;
             const isDark = state.theme === 'dark';
             const isPresetMode = state.viewMode === 'presets';
             container.innerHTML = `
@@ -605,7 +813,7 @@
                     ` : ''}
                 </div>
                 ${!isPresetMode ? `
-                <div class="flex-1 overflow-y-auto p-3 custom-scrollbar">
+                <div class="flex-1 overflow-y-auto p-3 custom-scrollbar" id="cat-list-scroll">
                     <div class="text-xs font-bold text-slate-400 px-3 mb-2 uppercase tracking-wider">分类列表</div>
                     <ul class="space-y-1">
                         <li><button onclick="state.currentCategory='全部';state.page=1;renderGrid();renderSidebarLeft()" class="w-full text-left px-3 py-2 rounded-xl text-sm font-bold transition-all ${state.currentCategory==='全部'?'bg-indigo-600 text-white shadow-md':'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}">全部 <span class="float-right opacity-50 text-xs font-normal mt-0.5">${state.artists.length}</span></button></li>
@@ -623,6 +831,12 @@
                 <div class="p-4 border-t border-slate-200/50 dark:border-slate-700/50"><button onclick="actions.addCategory()" class="w-full py-2.5 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400 text-sm font-bold hover:border-indigo-400 hover:text-indigo-500 transition-colors">+ 新建分类</button></div>
                 ` : `<div class="flex-1 p-6 flex flex-col items-center justify-center text-slate-400 text-center text-sm"><i data-lucide="layout-grid" class="w-12 h-12 mb-4 opacity-30"></i></div>`}
             `;
+            // Restore scroll position of the category list after re-render
+            const newCatListEl = document.getElementById('cat-list-scroll');
+            if (newCatListEl) {
+                newCatListEl.offsetHeight; // Force synchronous layout so scrollTop does not clamp to 0
+                newCatListEl.scrollTop = savedScrollTop;
+            }
             lucide.createIcons(container);
         };
 
@@ -674,6 +888,22 @@
             const list = getFilteredList();
             const totalPage = Math.ceil(list.length / state.pageSize) || 1;
             if (state.page > totalPage) state.page = totalPage || 1;
+
+            const isFilterChanged = state._prevPage !== state.page || 
+                                    state._prevCategory !== state.currentCategory || 
+                                    state._prevMode !== state.viewMode || 
+                                    state._prevSearch !== state.searchQuery ||
+                                    state._prevSort !== state.sortMode;
+                                    
+            state._prevPage = state.page;
+            state._prevCategory = state.currentCategory;
+            state._prevMode = state.viewMode;
+            state._prevSearch = state.searchQuery;
+            state._prevSort = state.sortMode;
+
+            // Save scroll position before re-render, zero out if filter/page changed
+            const savedGridScrollTop = isFilterChanged ? 0 : container.scrollTop;
+
             const pageItems = list.slice((state.page-1)*state.pageSize, state.page*state.pageSize);
 
             if (state.viewMode === 'presets') {
@@ -736,6 +966,8 @@
                 }
                 footer.innerHTML = `<span class="text-slate-500">Total: ${list.length} Artists</span><div class="flex items-center gap-2"><button onclick="actions.setPage(${state.page-1})" ${state.page===1?'disabled':''} class="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg disabled:opacity-30"><i data-lucide="chevron-left" class="w-5 h-5 dark:text-white"></i></button><span class="font-mono font-bold dark:text-white w-10 text-center text-base">${state.page}</span><button onclick="actions.setPage(${state.page+1})" ${state.page===totalPage?'disabled':''} class="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg disabled:opacity-30"><i data-lucide="chevron-right" class="w-5 h-5 dark:text-white"></i></button></div>`;
             }
+            // Restore scroll position synchronously to avoid flash
+            container.scrollTop = savedGridScrollTop;
             lucide.createIcons(container);
             lucide.createIcons(footer);
         };
@@ -772,33 +1004,284 @@
             }
         };
 
+        // =========================================
+        // 饼状图 & 悬停预览
+        // =========================================
+        const PIE_COLORS = ['#818cf8','#f472b6','#fbbf24','#34d399','#60a5fa','#a78bfa','#f87171','#2dd4bf','#fb923c','#22d3ee','#a3e635','#e879f9','#67e8f9','#fdba74','#c4b5fd'];
+        let _pieSegments = [];
+        let _hoveredPieIdx = -1;
+
+        const drawPieChart = (canvasId, items) => {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas || items.length === 0) return;
+            const dpr = window.devicePixelRatio || 1;
+            const displayW = canvas.clientWidth;
+            const displayH = canvas.clientHeight;
+            canvas.width = displayW * dpr;
+            canvas.height = displayH * dpr;
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+            const cx = displayW / 2, cy = displayH / 2;
+            const outerR = Math.min(cx, cy) - 12;
+            const innerR = outerR * 0.52;
+            const totalWeight = items.reduce((s, a) => s + (state.selected[String(a.id)] || 1), 0);
+            let startAngle = -Math.PI / 2;
+            _pieSegments = [];
+            items.forEach((a, i) => {
+                const weight = state.selected[String(a.id)] || 1;
+                const slice = (weight / totalWeight) * Math.PI * 2;
+                const endAngle = startAngle + slice;
+                const hovered = _hoveredPieIdx === i;
+                const r = hovered ? outerR + 5 : outerR;
+                const ir = hovered ? innerR - 2 : innerR;
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, startAngle, endAngle);
+                ctx.arc(cx, cy, ir, endAngle, startAngle, true);
+                ctx.closePath();
+                const color = PIE_COLORS[i % PIE_COLORS.length];
+                ctx.fillStyle = color;
+                if (hovered) { ctx.shadowColor = color; ctx.shadowBlur = 14; }
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                const pct = ((weight / totalWeight) * 100);
+                if (slice > 0.35) {
+                    const mid = startAngle + slice / 2;
+                    const lr = (r + ir) / 2;
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 11px Inter,sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(Math.round(pct) + '%', cx + Math.cos(mid) * lr, cy + Math.sin(mid) * lr);
+                }
+                _pieSegments.push({ startAngle, endAngle, artist: a, index: i, color, pct: pct.toFixed(1) });
+                startAngle = endAngle;
+            });
+            ctx.fillStyle = state.theme === 'dark' ? '#e2e8f0' : '#334155';
+            ctx.font = 'bold 22px Inter,sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(items.length, cx, cy - 8);
+            ctx.font = '11px Inter,sans-serif';
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillText('位画师', cx, cy + 12);
+        };
+
+        const setupPieHover = (canvasId, items) => {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            const displayW = canvas.clientWidth, displayH = canvas.clientHeight;
+            const cx = displayW / 2, cy = displayH / 2;
+            const outerR = Math.min(cx, cy) - 12;
+            const innerR = outerR * 0.52;
+            const totalWeight = items.reduce((s, a) => s + (state.selected[String(a.id)] || 1), 0);
+            canvas.onmousemove = (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+                const dx = mx - cx, dy = my - cy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                let found = -1;
+                if (dist >= innerR - 4 && dist <= outerR + 8) {
+                    let mouseAngle = Math.atan2(dy, dx) + Math.PI / 2;
+                    if (mouseAngle < 0) mouseAngle += Math.PI * 2;
+                    let cum = 0;
+                    for (let i = 0; i < items.length; i++) {
+                        const w = state.selected[String(items[i].id)] || 1;
+                        const slice = (w / totalWeight) * Math.PI * 2;
+                        if (mouseAngle >= cum && mouseAngle < cum + slice) { found = i; break; }
+                        cum += slice;
+                    }
+                }
+                if (found !== _hoveredPieIdx) {
+                    _hoveredPieIdx = found;
+                    drawPieChart(canvasId, items);
+                    if (found >= 0) {
+                        showArtistPreview(String(items[found].id), e);
+                        highlightArtistRow(found);
+                    } else { hideArtistPreview(); highlightArtistRow(-1); }
+                } else if (found >= 0) { movePreviewTooltip(e); }
+            };
+            canvas.onmouseleave = () => {
+                if (_hoveredPieIdx !== -1) { _hoveredPieIdx = -1; drawPieChart(canvasId, items); hideArtistPreview(); highlightArtistRow(-1); }
+            };
+        };
+
+        const highlightArtistRow = (idx) => {
+            document.querySelectorAll('.artist-hover-row').forEach((el, i) => {
+                if (i === idx) { el.style.borderColor = PIE_COLORS[i % PIE_COLORS.length]; el.style.background = 'rgba(99,102,241,0.08)'; }
+                else { el.style.borderColor = 'transparent'; el.style.background = ''; }
+            });
+        };
+
+        const showArtistPreview = async (id, evt) => {
+            const tooltip = document.getElementById('artist-preview-tooltip');
+            if (!tooltip) return;
+            let img = state.pageImages[id];
+            if (!img) { img = await db.get(id); if (img) state.pageImages[id] = img; }
+            const artist = state.artists.find(a => String(a.id) === id);
+            const name = artist ? artist.name : 'Unknown';
+            const selIds = Object.keys(state.selected);
+            const tw = selIds.reduce((s, sid) => s + (state.selected[sid] || 1), 0);
+            const pct = tw > 0 ? ((state.selected[id] || 1) / tw * 100).toFixed(1) : '0';
+            if (img) {
+                tooltip.innerHTML = `<img src="${img}"><div class="preview-label">${name}<span class="preview-pct">${pct}%</span></div>`;
+            } else {
+                tooltip.innerHTML = `<div style="width:100%;aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#e0e7ff,#f3e8ff)"><span style="font-size:36px;opacity:0.3">🎨</span></div><div class="preview-label">${name}<span class="preview-pct">${pct}%</span></div>`;
+            }
+            tooltip.classList.add('show');
+            movePreviewTooltip(evt);
+        };
+
+        const movePreviewTooltip = (e) => {
+            const tooltip = document.getElementById('artist-preview-tooltip');
+            if (!tooltip || !tooltip.classList.contains('show')) return;
+            const sidebar = document.getElementById('sidebar-right-container');
+            if (!sidebar) return;
+            const sr = sidebar.getBoundingClientRect();
+            const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+            let left = sr.left - tw - 12;
+            let top = e.clientY - th / 2;
+            if (left < 0) left = sr.right + 12;
+            if (top < 8) top = 8;
+            if (top + th > window.innerHeight - 8) top = window.innerHeight - th - 8;
+            tooltip.style.left = left + 'px';
+            tooltip.style.top = top + 'px';
+        };
+
+        const hideArtistPreview = () => {
+            const tooltip = document.getElementById('artist-preview-tooltip');
+            if (tooltip) tooltip.classList.remove('show');
+        };
+
+        // === 画师排序相关 ===
+        let _dragSrcIdx = -1;
+
+        const moveSelectedArtist = (fromIdx, toIdx) => {
+            if (toIdx < 0 || toIdx >= state.selectedOrder.length) return;
+            const arr = [...state.selectedOrder];
+            const [item] = arr.splice(fromIdx, 1);
+            arr.splice(toIdx, 0, item);
+            state.selectedOrder = arr;
+            renderSidebarRight();
+        };
+
+        const setupDragAndDrop = () => {
+            const listEl = document.getElementById('right-artist-list-scroll');
+            if (!listEl) return;
+            const rows = listEl.querySelectorAll('.artist-drag-item');
+            rows.forEach((row, idx) => {
+                row.addEventListener('dragstart', (e) => {
+                    _dragSrcIdx = idx;
+                    row.classList.add('dragging');
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', idx);
+                });
+                row.addEventListener('dragend', () => {
+                    _dragSrcIdx = -1;
+                    row.classList.remove('dragging');
+                    rows.forEach(r => { r.classList.remove('drag-over-top', 'drag-over-bottom'); });
+                });
+                row.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    const rect = row.getBoundingClientRect();
+                    const midY = rect.top + rect.height / 2;
+                    rows.forEach(r => { r.classList.remove('drag-over-top', 'drag-over-bottom'); });
+                    if (e.clientY < midY) {
+                        row.classList.add('drag-over-top');
+                    } else {
+                        row.classList.add('drag-over-bottom');
+                    }
+                });
+                row.addEventListener('dragleave', () => {
+                    row.classList.remove('drag-over-top', 'drag-over-bottom');
+                });
+                row.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    rows.forEach(r => { r.classList.remove('drag-over-top', 'drag-over-bottom'); });
+                    const fromIdx = _dragSrcIdx;
+                    if (fromIdx < 0 || fromIdx === idx) return;
+                    const rect = row.getBoundingClientRect();
+                    const midY = rect.top + rect.height / 2;
+                    let toIdx = e.clientY < midY ? idx : idx;
+                    // Adjust for direction
+                    const arr = [...state.selectedOrder];
+                    const [item] = arr.splice(fromIdx, 1);
+                    // recalc target after removal
+                    let insertIdx = e.clientY < midY ? idx : idx + 1;
+                    if (fromIdx < insertIdx) insertIdx--; // adjust since we removed one
+                    arr.splice(insertIdx, 0, item);
+                    state.selectedOrder = arr;
+                    renderSidebarRight();
+                });
+            });
+        };
+
         const renderSidebarRight = () => {
+          try {
             const container = document.getElementById('sidebar-right-container');
             if(!container) return;
-            const selectedIds = Object.keys(state.selected);
-            const items = selectedIds.map(id => state.artists.find(a => String(a.id) === id)).filter(Boolean);
+            // Save scroll position of the artist list before re-render
+            const artistListEl = container.querySelector('.flex-1.overflow-y-auto');
+            const savedRightScrollTop = artistListEl ? artistListEl.scrollTop : 0;
+
+            // Sync selectedOrder with state.selected (cleanup stale entries, add missing ones)
+            state.selectedOrder = state.selectedOrder.filter(id => id in state.selected);
+            Object.keys(state.selected).forEach(id => {
+                if (!state.selectedOrder.includes(id)) state.selectedOrder.push(id);
+            });
+
+            const orderedIds = state.selectedOrder;
+            const items = orderedIds.map(id => state.artists.find(a => String(a.id) === id)).filter(Boolean);
             const prompt = items.map(a => {
                 const w = state.selected[String(a.id)];
                 return state.promptFormat === 'webui' ? (w===1 ? a.tag : `(${a.tag}:${w.toFixed(1)})`) : (w===1 ? a.tag : `${w.toFixed(1)}::${a.tag}::`);
             }).join(', ');
             const isWebui = state.promptFormat === 'webui';
+            const totalWeight = items.reduce((s, a) => s + (state.selected[String(a.id)] || 1), 0);
 
-            // 修复 3: 标签文案
             container.innerHTML = `
                 <div class="p-5 border-b border-slate-200/50 dark:border-slate-700/50 flex justify-between items-center"><h2 class="font-bold text-lg dark:text-white flex items-center gap-2"><i data-lucide="wand-2" class="w-5 h-5 text-indigo-500"></i> 咒语生成</h2><span class="bg-indigo-100 text-indigo-600 text-sm font-bold px-3 py-1 rounded-full">${items.length}</span></div>
+                ${items.length > 0 ? `<div class="px-4 py-3 border-b border-slate-200/50 dark:border-slate-700/50 pie-canvas-wrap"><canvas id="pie-chart-cv" style="width:100%;height:180px;display:block;cursor:pointer"></canvas></div>` : ''}
                 <div class="px-5 py-3 bg-slate-50 dark:bg-slate-800/30 border-b border-slate-200/50 dark:border-slate-700/50 flex items-center justify-between"><span class="text-xs font-bold text-slate-500">输出格式</span><div class="flex bg-slate-200 dark:bg-slate-700 rounded-full p-1 w-32 relative cursor-pointer" onclick="state.promptFormat=state.promptFormat==='webui'?'novelai':'webui';renderSidebarRight()"><div class="absolute inset-y-1 w-[calc(50%-4px)] bg-white dark:bg-indigo-500 rounded-full shadow-sm capsule-bg" style="left: ${isWebui?'4px':'calc(50%)'}"></div><div class="flex-1 text-[10px] font-bold text-center z-10 py-1 ${isWebui?'text-indigo-600':'text-slate-500 dark:text-slate-400'}">(SDXL)</div><div class="flex-1 text-[10px] font-bold text-center z-10 py-1 ${!isWebui?'text-white':'text-slate-500 dark:text-slate-400'}">(NAI)</div></div></div>
-                <div class="flex-1 overflow-y-auto p-5 space-y-3 custom-scrollbar">${items.length === 0 ? `<div class="text-center text-slate-400 py-10">点击左侧卡片选择画师</div>` : items.map(a => { const id = String(a.id); const w = state.selected[id]; return `<div class="flex items-center justify-between group bg-white/50 dark:bg-slate-800/50 p-2 rounded-xl border border-transparent hover:border-slate-200 dark:hover:border-slate-700 transition-all"><div class="flex-1 min-w-0 pr-3"><div class="text-sm font-bold text-slate-700 dark:text-slate-200 truncate">${a.name}</div><div class="text-xs text-slate-400 truncate font-mono mt-0.5">${a.tag}</div></div><div class="flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-1 shadow-sm"><button onclick="state.selected['${id}']=(state.selected['${id}']-0.1)||0.1;renderSidebarRight()" class="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-500 hover:text-indigo-600"><i data-lucide="minus" class="w-3.5 h-3.5"></i></button><span class="text-xs font-mono w-8 text-center font-bold dark:text-white">${w.toFixed(1)}</span><button onclick="state.selected['${id}']=(state.selected['${id}']+0.1)||0.1;renderSidebarRight()" class="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-500 hover:text-indigo-600"><i data-lucide="plus" class="w-3.5 h-3.5"></i></button></div><button onclick="delete state.selected['${id}'];updateCardVisual('${id}');renderSidebarRight()" class="ml-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg p-1 transition-colors"><i data-lucide="x" class="w-4 h-4"></i></button></div>`}).join('')}</div>
-                <div class="p-5 border-t border-slate-200/50 dark:border-slate-700/50 space-y-3 bg-white/60 dark:bg-slate-900/60 backdrop-blur-md"><textarea id="res-box" readonly class="w-full h-24 text-sm p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none dark:text-slate-300 shadow-inner" onclick="this.select()">${prompt}</textarea><div class="flex gap-2"><button onclick="actions.openAddPresetModal()" class="flex-1 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-green-500/30 flex items-center justify-center gap-1"><i data-lucide="save" class="w-4 h-4"></i> 存为预设</button><button onclick="document.getElementById('res-box').select();document.execCommand('copy');showToast('咒语已复制')" class="flex-[2] bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/30 flex items-center justify-center gap-2 active:scale-95 transition-transform"><i data-lucide="copy" class="w-4 h-4"></i> 复制</button><button onclick="state.selected={};renderGrid();renderSidebarRight()" class="p-3 rounded-xl border border-red-200 text-red-500 hover:bg-red-50 hover:border-red-300 transition-colors"><i data-lucide="trash-2" class="w-5 h-5"></i></button></div></div>`;
+                <div class="flex-1 overflow-y-auto p-5 space-y-2 custom-scrollbar" id="right-artist-list-scroll">${items.length === 0 ? `<div class="text-center text-slate-400 py-10"><i data-lucide="clipboard-paste" class="w-10 h-10 mx-auto mb-3 opacity-30"></i><p>点击左侧卡片选择画师</p><p class="text-xs mt-1 opacity-60">或在下方文本框粘贴画师串导入</p></div>` : items.map((a, idx) => { const id = String(a.id); const w = state.selected[id]; const pct = totalWeight > 0 ? ((w/totalWeight)*100).toFixed(1) : '0'; const color = PIE_COLORS[idx % PIE_COLORS.length]; const isFirst = idx === 0; const isLast = idx === items.length - 1; const isGhost = !!a._ghost; return `<div class="flex items-center gap-1 group bg-white/50 dark:bg-slate-800/50 p-2 rounded-xl border border-transparent hover:border-slate-200 dark:hover:border-slate-700 transition-all artist-hover-row artist-drag-item ${isGhost ? 'ghost-artist' : ''}" data-artist-id="${id}" data-artist-idx="${idx}" draggable="true"><div class="flex flex-col gap-0.5 flex-shrink-0 mr-1"><button onclick="event.stopPropagation();moveSelectedArtist(${idx},${idx-1})" class="artist-move-btn" ${isFirst?'disabled':''}><i data-lucide="chevron-up" class="w-3 h-3"></i></button><button onclick="event.stopPropagation();moveSelectedArtist(${idx},${idx+1})" class="artist-move-btn" ${isLast?'disabled':''}><i data-lucide="chevron-down" class="w-3 h-3"></i></button></div><div class="flex items-center flex-1 min-w-0 cursor-default" ${!isGhost ? `onmouseenter="showArtistPreview('${id}',event)" onmousemove="movePreviewTooltip(event)" onmouseleave="hideArtistPreview()"` : ''}><div class="w-3 h-3 rounded-full flex-shrink-0 mr-2" style="background:${isGhost ? '#94a3b8' : color};box-shadow:0 0 6px ${isGhost ? '#94a3b860' : color+'60'}"></div><div class="flex-1 min-w-0 pr-2"><div class="text-sm font-bold text-slate-700 dark:text-slate-200 truncate">${a.name}${isGhost ? '<span class="ghost-badge"><i data-lucide="help-circle" class="w-3 h-3"></i>未匹配</span>' : ''}</div><div class="text-xs text-slate-400 truncate font-mono mt-0.5">${a.tag} <span style="color:${isGhost ? '#94a3b8' : color};font-weight:700">${pct}%</span></div></div></div><div class="flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-1 shadow-sm"><button onclick="state.selected['${id}']=(state.selected['${id}']-0.1)||0.1;renderSidebarRight()" class="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-500 hover:text-indigo-600"><i data-lucide="minus" class="w-3.5 h-3.5"></i></button><span class="text-xs font-mono w-8 text-center font-bold dark:text-white">${w.toFixed(1)}</span><button onclick="state.selected['${id}']=(state.selected['${id}']+0.1)||0.1;renderSidebarRight()" class="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-500 hover:text-indigo-600"><i data-lucide="plus" class="w-3.5 h-3.5"></i></button></div><button onclick="delete state.selected['${id}'];state.selectedOrder=state.selectedOrder.filter(x=>x!=='${id}');if('${id}'.startsWith('_ghost_')){state.artists=state.artists.filter(a=>String(a.id)!=='${id}');}hideArtistPreview();updateCardVisual('${id}');renderSidebarRight()" class="ml-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg p-1 transition-colors"><i data-lucide="x" class="w-4 h-4"></i></button></div>`}).join('')}</div>
+                <div class="p-5 border-t border-slate-200/50 dark:border-slate-700/50 space-y-3 bg-white/60 dark:bg-slate-900/60 backdrop-blur-md"><textarea id="res-box" class="w-full h-24 text-sm p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none dark:text-slate-300 shadow-inner" placeholder="粘贴画师串到此处导入，或由选择自动生成...">${prompt}</textarea><div class="flex gap-2"><button onclick="const box=document.getElementById('res-box');importFromPromptText(box.value)" class="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-amber-500/30 flex items-center justify-center gap-1 import-prompt-btn"><i data-lucide="clipboard-paste" class="w-4 h-4"></i> 导入串</button><button onclick="actions.openAddPresetModal()" class="flex-1 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-green-500/30 flex items-center justify-center gap-1"><i data-lucide="save" class="w-4 h-4"></i> 存预设</button><button onclick="document.getElementById('res-box').select();document.execCommand('copy');showToast('咒语已复制')" class="flex-[2] bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/30 flex items-center justify-center gap-2 active:scale-95 transition-transform"><i data-lucide="copy" class="w-4 h-4"></i> 复制</button><button onclick="state.selected={};state.selectedOrder=[];state.artists=state.artists.filter(a=>!a._ghost);renderGrid();renderSidebarRight()" class="p-3 rounded-xl border border-red-200 text-red-500 hover:bg-red-50 hover:border-red-300 transition-colors"><i data-lucide="trash-2" class="w-5 h-5"></i></button></div></div>`;
+            // Restore scroll position of the artist list after re-render
+            const newArtistListEl = document.getElementById('right-artist-list-scroll');
+            if (newArtistListEl) {
+                newArtistListEl.offsetHeight; // Force synchronous layout so scrollTop does not clamp to 0
+                newArtistListEl.scrollTop = savedRightScrollTop;
+            }
+            if (items.length > 0) {
+                requestAnimationFrame(() => {
+                    try { drawPieChart('pie-chart-cv', items); setupPieHover('pie-chart-cv', items); } catch(e) { console.warn('Pie chart error:', e); }
+                    setupDragAndDrop();
+                });
+            }
             lucide.createIcons(container);
+          } catch(e) { console.error('renderSidebarRight error:', e); }
         };
 
         const renderModal = () => {
             const container = document.getElementById('modal-container');
+            
+            // Save scroll positions before resetting innerHTML
+            const batchScroll = document.getElementById('modal-batch-cat-scroll');
+            const savedBatchScroll = batchScroll ? batchScroll.scrollTop : 0;
+            
+            const editPresetScroll = document.getElementById('modal-edit-preset-scroll');
+            const savedEditPresetScroll = editPresetScroll ? editPresetScroll.scrollTop : 0;
+            
+            const addCatScroll = document.getElementById('modal-add-cat-scroll');
+            const savedAddCatScroll = addCatScroll ? addCatScroll.scrollTop : 0;
+
             container.innerHTML = '';
             
             if(state.modal === 'batch-cat') {
                 const div = document.createElement('div');
-                div.innerHTML = `<div class="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"><div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="state.modal=null;renderModal()"></div><div class="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl p-6 relative z-10 shadow-2xl"><h2 class="text-xl font-bold mb-4 dark:text-white">批量添加到分类</h2><div class="max-h-60 overflow-y-auto space-y-2 mb-6 custom-scrollbar">${state.categories.map(c => `<label class="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer border border-slate-100 dark:border-slate-700"><input type="checkbox" value="${c}" class="w-5 h-5 accent-indigo-600 batch-cat-check"><span class="text-sm font-bold text-slate-700 dark:text-slate-300">${c}</span></label>`).join('')}</div><div class="flex gap-3"><button onclick="state.modal=null;renderModal()" class="flex-1 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-100">取消</button><button onclick="const checks=[...document.querySelectorAll('.batch-cat-check:checked')].map(e=>e.value);actions.batchAddCategories(checks)" class="flex-1 py-3 rounded-xl font-bold bg-indigo-600 text-white shadow-lg">确定</button></div></div></div>`;
+                div.innerHTML = `<div class="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"><div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="state.modal=null;renderModal()"></div><div class="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl p-6 relative z-10 shadow-2xl"><h2 class="text-xl font-bold mb-4 dark:text-white">批量添加到分类</h2><div id="modal-batch-cat-scroll" class="max-h-60 overflow-y-auto space-y-2 mb-6 custom-scrollbar">${state.categories.map(c => `<label class="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer border border-slate-100 dark:border-slate-700"><input type="checkbox" value="${c}" class="w-5 h-5 accent-indigo-600 batch-cat-check"><span class="text-sm font-bold text-slate-700 dark:text-slate-300">${c}</span></label>`).join('')}</div><div class="flex gap-3"><button onclick="state.modal=null;renderModal()" class="flex-1 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-100">取消</button><button onclick="const checks=[...document.querySelectorAll('.batch-cat-check:checked')].map(e=>e.value);actions.batchAddCategories(checks)" class="flex-1 py-3 rounded-xl font-bold bg-indigo-600 text-white shadow-lg">确定</button></div></div></div>`;
                 container.appendChild(div);
                 return;
             }
@@ -814,8 +1297,10 @@
             if(state.modal === 'edit-preset') {
                 const div = document.createElement('div');
                 const { name, imageUrl, items } = state.formData;
-                div.innerHTML = `<div class="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"><div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="state.modal=null;renderModal()"></div><div class="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl p-6 relative z-10 shadow-2xl"><h2 class="text-xl font-bold mb-4 dark:text-white">编辑预设</h2><div class="space-y-4"><div><label class="text-xs font-bold text-slate-500 uppercase">名称</label><input type="text" value="${name}" oninput="state.formData.name=this.value" class="w-full mt-1 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border-none"></div><div><label class="text-xs font-bold text-slate-500 uppercase">封面</label><div onclick="document.getElementById('pe-file').click()" class="mt-1 h-32 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl flex items-center justify-center cursor-pointer overflow-hidden relative">${imageUrl?`<img src="${imageUrl}" class="w-full h-full object-cover">`:`<span class="text-slate-400 text-xs">点击上传</span>`}<input type="file" id="pe-file" class="hidden" accept="image/*" onchange="compressImage(this.files[0]).then(b=>{state.formData.imageUrl=b;renderModal()})"></div></div><div><label class="text-xs font-bold text-slate-500 uppercase">包含画师 (${items.length})</label><div class="max-h-32 overflow-y-auto bg-slate-50 dark:bg-slate-800 rounded-xl p-2 mt-1 custom-scrollbar">${items.map(i => {const a=state.artists.find(x=>String(x.id)===i.id);return `<div class="text-xs py-1 px-2 border-b border-slate-200 dark:border-slate-700 last:border-0 flex justify-between"><span>${a?a.name:'Unknown'}</span><span class="font-mono text-slate-400">${i.weight}</span></div>`}).join('')}</div></div></div><div class="mt-6 flex gap-3"><button onclick="actions.deletePreset('${state.editingId}')" class="px-4 py-3 rounded-xl font-bold text-red-500 hover:bg-red-50 border border-red-100">删除</button><div class="flex-1"></div><button onclick="state.modal=null;renderModal()" class="px-5 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-100">取消</button><button onclick="actions.updatePreset()" class="px-5 py-3 rounded-xl font-bold bg-indigo-600 text-white shadow-lg">更新</button></div></div></div>`;
+                div.innerHTML = `<div class="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"><div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="state.modal=null;renderModal()"></div><div class="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl p-6 relative z-10 shadow-2xl"><h2 class="text-xl font-bold mb-4 dark:text-white">编辑预设</h2><div class="space-y-4"><div><label class="text-xs font-bold text-slate-500 uppercase">名称</label><input type="text" value="${name}" oninput="state.formData.name=this.value" class="w-full mt-1 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border-none"></div><div><label class="text-xs font-bold text-slate-500 uppercase">封面</label><div onclick="document.getElementById('pe-file').click()" class="mt-1 h-32 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl flex items-center justify-center cursor-pointer overflow-hidden relative">${imageUrl?`<img src="${imageUrl}" class="w-full h-full object-cover">`:`<span class="text-slate-400 text-xs">点击上传</span>`}<input type="file" id="pe-file" class="hidden" accept="image/*" onchange="compressImage(this.files[0]).then(b=>{state.formData.imageUrl=b;renderModal()})"></div></div><div><label class="text-xs font-bold text-slate-500 uppercase">包含画师 (${items.length})</label><div id="modal-edit-preset-scroll" class="max-h-32 overflow-y-auto bg-slate-50 dark:bg-slate-800 rounded-xl p-2 mt-1 custom-scrollbar">${items.map(i => {const a=state.artists.find(x=>String(x.id)===i.id);return `<div class="text-xs py-1 px-2 border-b border-slate-200 dark:border-slate-700 last:border-0 flex justify-between"><span>${a?a.name:'Unknown'}</span><span class="font-mono text-slate-400">${i.weight}</span></div>`}).join('')}</div></div></div><div class="mt-6 flex gap-3"><button onclick="actions.deletePreset('${state.editingId}')" class="px-4 py-3 rounded-xl font-bold text-red-500 hover:bg-red-50 border border-red-100">删除</button><div class="flex-1"></div><button onclick="state.modal=null;renderModal()" class="px-5 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-100">取消</button><button onclick="actions.updatePreset()" class="px-5 py-3 rounded-xl font-bold bg-indigo-600 text-white shadow-lg">更新</button></div></div></div>`;
                 container.appendChild(div);
+                const newEditPresetScroll = document.getElementById('modal-edit-preset-scroll');
+                if (newEditPresetScroll) { newEditPresetScroll.offsetHeight; newEditPresetScroll.scrollTop = savedEditPresetScroll; }
                 return;
             }
 
@@ -823,8 +1308,10 @@
                 const { name, tag, categories, imageUrl, danbooruCount } = state.formData;
                 const isEdit = !!state.editingId;
                 const div = document.createElement('div');
-                div.innerHTML = `<div class="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"><div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="state.modal=null;renderModal()"></div><div class="bg-white dark:bg-slate-900 w-full max-w-lg rounded-3xl p-6 relative z-10 shadow-2xl overflow-hidden transform transition-all"><h2 class="text-xl font-bold mb-5 dark:text-white">${isEdit?'编辑画师':'添加画师'}</h2><div class="space-y-4"><div class="flex gap-4"><div class="flex-1"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">名称</label><input type="text" value="${name||''}" oninput="state.formData.name=this.value" class="w-full mt-1 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border-none text-sm dark:text-white focus:ring-2 focus:ring-indigo-500 transition-shadow"></div><div class="flex-1"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">Tag <span class="text-red-500">*</span></label><input type="text" value="${tag||''}" oninput="state.formData.tag=this.value" class="w-full mt-1 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border-none text-sm font-mono dark:text-white focus:ring-2 focus:ring-indigo-500 transition-shadow"></div></div><div><label class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">所属分类 (多选)</label><div class="flex flex-wrap gap-2 max-h-32 overflow-y-auto custom-scrollbar p-1">${state.categories.map(c => {const isActive = categories.includes(c);return `<button onclick="const arr=state.formData.categories; if(arr.includes('${c}')) state.formData.categories=arr.filter(x=>x!=='${c}'); else state.formData.categories.push('${c}'); renderModal();" class="px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${isActive ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-transparent hover:bg-slate-200'}">${c}</button>`;}).join('')}</div></div><div class="flex gap-4"><div class="flex-1"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">热度</label><input type="number" value="${danbooruCount||0}" oninput="state.formData.danbooruCount=this.value" class="w-full mt-1 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border-none text-sm dark:text-white focus:ring-2 focus:ring-indigo-500 transition-shadow"></div><div class="flex-[2]"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">封面</label><div onclick="document.getElementById('modal-file').click()" class="mt-1 h-12 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl flex items-center justify-center cursor-pointer relative overflow-hidden group hover:border-indigo-500 transition-colors">${imageUrl ? `<span class="text-xs text-green-500 font-bold">已选择图片 (点击更换)</span>` : `<span class="text-xs text-slate-400">点击上传封面</span>`}<input type="file" id="modal-file" class="hidden" accept="image/*" onchange="compressImage(this.files[0]).then(b64 => {state.formData.imageUrl=b64;renderModal()})"></div></div></div></div><div class="mt-8 flex gap-3"><button onclick="state.modal=null;renderModal()" class="flex-1 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">取消</button><button onclick="actions.saveArtist()" class="flex-1 py-3 rounded-xl font-bold bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition-colors">保存</button></div></div></div>`;
+                div.innerHTML = `<div class="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"><div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="state.modal=null;renderModal()"></div><div class="bg-white dark:bg-slate-900 w-full max-w-lg rounded-3xl p-6 relative z-10 shadow-2xl overflow-hidden transform transition-all"><h2 class="text-xl font-bold mb-5 dark:text-white">${isEdit?'编辑画师':'添加画师'}</h2><div class="space-y-4"><div class="flex gap-4"><div class="flex-1"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">名称</label><input type="text" value="${name||''}" oninput="state.formData.name=this.value" class="w-full mt-1 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border-none text-sm dark:text-white focus:ring-2 focus:ring-indigo-500 transition-shadow"></div><div class="flex-1"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">Tag <span class="text-red-500">*</span></label><input type="text" value="${tag||''}" oninput="state.formData.tag=this.value" class="w-full mt-1 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border-none text-sm font-mono dark:text-white focus:ring-2 focus:ring-indigo-500 transition-shadow"></div></div><div><label class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">所属分类 (多选)</label><div id="modal-add-cat-scroll" class="flex flex-wrap gap-2 max-h-32 overflow-y-auto custom-scrollbar p-1">${state.categories.map(c => {const isActive = categories.includes(c);return `<button onclick="const arr=state.formData.categories; if(arr.includes('${c}')) state.formData.categories=arr.filter(x=>x!=='${c}'); else state.formData.categories.push('${c}'); renderModal();" class="px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${isActive ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-transparent hover:bg-slate-200'}">${c}</button>`;}).join('')}</div></div><div class="flex gap-4"><div class="flex-1"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">热度</label><input type="number" value="${danbooruCount||0}" oninput="state.formData.danbooruCount=this.value" class="w-full mt-1 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border-none text-sm dark:text-white focus:ring-2 focus:ring-indigo-500 transition-shadow"></div><div class="flex-[2]"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">封面</label><div onclick="document.getElementById('modal-file').click()" class="mt-1 h-12 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl flex items-center justify-center cursor-pointer relative overflow-hidden group hover:border-indigo-500 transition-colors">${imageUrl ? `<span class="text-xs text-green-500 font-bold">已选择图片 (点击更换)</span>` : `<span class="text-xs text-slate-400">点击上传封面</span>`}<input type="file" id="modal-file" class="hidden" accept="image/*" onchange="compressImage(this.files[0]).then(b64 => {state.formData.imageUrl=b64;renderModal()})"></div></div></div></div><div class="mt-8 flex gap-3"><button onclick="state.modal=null;renderModal()" class="flex-1 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">取消</button><button onclick="actions.saveArtist()" class="flex-1 py-3 rounded-xl font-bold bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition-colors">保存</button></div></div></div>`;
                 container.appendChild(div);
+                const newAddCatScroll = document.getElementById('modal-add-cat-scroll');
+                if (newAddCatScroll) { newAddCatScroll.offsetHeight; newAddCatScroll.scrollTop = savedAddCatScroll; }
             }
         };
 
