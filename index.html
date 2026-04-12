@@ -89,6 +89,19 @@
         .ghost-artist .ghost-badge { display: inline-flex; align-items: center; gap: 2px; font-size: 9px; font-weight: 700; color: #f59e0b; background: rgba(245,158,11,0.12); padding: 1px 6px; border-radius: 6px; margin-left: 4px; }
         .import-prompt-btn { transition: all 0.2s ease; }
         .import-prompt-btn:hover { transform: scale(1.02); }
+
+        .social-links-bar { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+        .social-link-icon {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 22px; height: 22px; border-radius: 6px;
+            background: rgba(99,102,241,0.12); color: #6366f1;
+            font-size: 10px; font-weight: 800;
+            transition: all 0.15s ease; text-decoration: none; cursor: pointer;
+        }
+        .social-link-icon:hover { background: #6366f1; color: #fff; transform: scale(1.15); }
+        .dark .social-link-icon { background: rgba(129,140,248,0.15); color: #818cf8; }
+        .dark .social-link-icon:hover { background: #818cf8; color: #0f172a; }
+        .social-link-more { font-size: 9px; color: #94a3b8; font-weight: 700; margin-left: 2px; }
     </style>
 </head>
 <body>
@@ -200,7 +213,8 @@
                         const parsed = JSON.parse(savedMeta);
                         state.artists = parsed.map(a => ({
                             ...a, id: String(a.id), name: a.name||a.tag||'Unknown', tag: a.tag||a.name||'',
-                            categories: Array.isArray(a.categories) ? a.categories : [a.category || '未分类']
+                            categories: Array.isArray(a.categories) ? a.categories : [a.category || '未分类'],
+                            socialLinks: Array.isArray(a.socialLinks) ? a.socialLinks : []
                         }));
                     } catch(e) { state.artists = []; }
                 }
@@ -432,37 +446,48 @@
                         const existingTags = new Set(state.artists.map(a => a.tag.toLowerCase()));
                         const existingPresetNames = new Set(state.presets.map(p => p.name));
                         let addedCount = 0;
+                        let updatedCount = 0;
 
                         for(const item of list) {
                             let tag = item.tag || item.prompt || '';
                             let name = item.name || '';
                             if(!tag && name) tag = name;
                             if(!name && tag) name = tag;
-                            
-                            if(existingTags.has(tag.toLowerCase())) continue;
-
-                            let id = String(Date.now() + Math.random());
-                            
-                            const img = item.imageUrl || item.image;
-                            if(img && img.startsWith('data:')) await db.put(id, img);
+                            if(!tag) continue;
                             
                             let cats = Array.isArray(item.categories) ? item.categories : [];
                             if(item.category && item.category !== '未分类') cats.push(item.category);
                             if(cats.length === 0) cats = ['未分类'];
                             cats = [...new Set(cats)];
-
-                            const artist = {
-                                id, name: name||'Unknown', tag: tag||'unknown',
-                                categories: cats,
-                                danbooruCount: parseInt(item.danbooruCount)||0,
-                                createdAt: item.createdAt||Date.now()
-                            };
-                            
-                            state.artists.push(artist); 
-                            existingTags.add(tag.toLowerCase()); 
-                            addedCount++;
-
                             cats.forEach(c => { if(c !== '未分类' && !state.categories.includes(c)) state.categories.push(c); });
+                            
+                            const img = item.imageUrl || item.image;
+
+                            let existing = state.artists.find(a => a.tag.toLowerCase() === tag.toLowerCase());
+                            if(existing) {
+                                // 存在则更新合并属性
+                                if(img && img.startsWith('data:')) {
+                                    await db.put(existing.id, img);
+                                    state.pageImages[existing.id] = img;
+                                }
+                                if(item.danbooruCount !== undefined) existing.danbooruCount = parseInt(item.danbooruCount) || 0;
+                                if(Array.isArray(item.socialLinks)) existing.socialLinks = item.socialLinks;
+                                existing.categories = [...new Set([...existing.categories, ...cats])];
+                                updatedCount++;
+                            } else {
+                                // 不存在则新增
+                                let id = String(Date.now() + Math.random());
+                                if(img && img.startsWith('data:')) await db.put(id, img);
+                                const artist = {
+                                    id, name: name||'Unknown', tag,
+                                    categories: cats,
+                                    danbooruCount: parseInt(item.danbooruCount)||0,
+                                    socialLinks: Array.isArray(item.socialLinks) ? item.socialLinks : [],
+                                    createdAt: item.createdAt||Date.now()
+                                };
+                                state.artists.push(artist); 
+                                addedCount++;
+                            }
                         }
                         
                         if(presets.length > 0) {
@@ -480,7 +505,7 @@
                         actions.saveCats();
                         state.pageImages = {}; 
                         renderAll();
-                        showToast(`导入完成! 新增 ${addedCount} 位画师`);
+                        showToast(`导入完成! 新增 ${addedCount}，更新 ${updatedCount}`);
                     } catch(err) { console.error(err); showToast("导入失败"); }
                 };
                 reader.readAsText(file);
@@ -516,13 +541,14 @@
                     tag: a ? a.tag : '',
                     categories: a ? [...a.categories] : ['未分类'],
                     imageUrl: img || '',
-                    danbooruCount: a ? a.danbooruCount : 0
+                    danbooruCount: a ? a.danbooruCount : 0,
+                    socialLinks: a ? (a.socialLinks || []) : []
                 };
                 renderModal();
             },
 
             saveArtist: async () => {
-                const { name, tag, categories, imageUrl, danbooruCount } = state.formData;
+                const { name, tag, categories, imageUrl, danbooruCount, socialLinks } = state.formData;
                 if(!tag) return showToast("Tag 必填");
                 const id = state.editingId ? String(state.editingId) : String(Date.now());
                 
@@ -535,6 +561,7 @@
                 const newMeta = {
                     id, name: name||tag, tag, categories: finalCats,
                     danbooruCount: parseInt(danbooruCount)||0,
+                    socialLinks: Array.isArray(socialLinks) ? socialLinks.filter(u => u.trim()) : [],
                     createdAt: state.editingId ? (state.artists.find(a=>String(a.id)===id)?.createdAt||Date.now()) : Date.now()
                 };
                 
@@ -742,6 +769,37 @@
             renderSidebarRight();
             const msg = `导入完成: ${foundCount} 位已匹配` + (ghostCount > 0 ? `，${ghostCount} 位未找到(占位)` : '');
             showToast(msg);
+        };
+
+        // =========================================
+        // 社交链接图标映射
+        // =========================================
+        const getSocialIcon = (url) => {
+            const u = url.toLowerCase();
+            if (u.includes('pixiv.net')) return 'Px';
+            if (u.includes('twitter.com') || u.includes('x.com')) return 'X';
+            if (u.includes('skeb.jp')) return 'Sk';
+            if (u.includes('fanbox.cc') || u.includes('pixiv.net/fanbox')) return 'Fb';
+            if (u.includes('patreon.com')) return 'Pa';
+            if (u.includes('deviantart.com')) return 'DA';
+            if (u.includes('tumblr.com')) return 'Tu';
+            if (u.includes('instagram.com')) return 'Ig';
+            if (u.includes('artstation.com')) return 'AS';
+            if (u.includes('furaffinity.net')) return 'FA';
+            if (u.includes('nicovideo.jp') || u.includes('nico.ms')) return 'Nc';
+            if (u.includes('youtube.com') || u.includes('youtu.be')) return 'Yt';
+            if (u.includes('reddit.com')) return 'Re';
+            if (u.includes('github.com')) return 'Gh';
+            if (u.includes('lofter.com')) return 'Lo';
+            if (u.includes('weibo.com') || u.includes('weibo.cn')) return 'Wb';
+            if (u.includes('bilibili.com')) return 'Bi';
+            if (u.includes('booth.pm')) return 'Bo';
+            if (u.includes('misskey') || u.includes('mastodon')) return 'Ms';
+            if (u.includes('bsky.app')) return 'Bs';
+            if (u.includes('newgrounds.com')) return 'NG';
+            if (u.includes('ko-fi.com')) return 'Ko';
+            if (u.includes('lit.link') || u.includes('linktr.ee')) return 'Lk';
+            try { const h = new URL(url).hostname.replace('www.',''); return h.slice(0,2).toUpperCase(); } catch(e) { return '🔗'; }
         };
 
         const getFilteredList = () => {
@@ -958,9 +1016,13 @@
                             </div>
                             <div class="p-3 bg-white/90 dark:bg-slate-800/90 backdrop-blur border-t border-white/20">
                                 <h3 class="font-bold text-slate-800 dark:text-slate-100 truncate text-sm">${a.name}</h3>
-                                <div class="flex gap-1 mt-1 overflow-hidden"><span class="text-[10px] text-slate-500 bg-slate-100 dark:bg-slate-700/50 px-1.5 rounded truncate font-mono">${a.tag}</span></div>
+                                <div class="flex gap-1 mt-1 overflow-hidden items-center">
+                                    <span class="text-[10px] text-slate-500 bg-slate-100 dark:bg-slate-700/50 px-1.5 rounded truncate font-mono">${a.tag}</span>
+                                    ${(a.socialLinks && a.socialLinks.length > 0) ? `<div class="flex gap-1 ml-auto overflow-x-auto scrollbar-hide flex-nowrap items-center" style="max-width: 60%; mask-image: linear-gradient(to right, black 80%, transparent 100%); -webkit-mask-image: linear-gradient(to right, black 80%, transparent 100%); padding-right: 12px;">${a.socialLinks.map(u => `<a href="${u}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="social-link-icon flex-shrink-0" title="${u}">${getSocialIcon(u)}</a>`).join('')}</div>` : ''}
+                                </div>
                             </div>
                         </div>`;
+
                     }).join('')}</div>`;
                     injectImages(pageItems);
                 }
@@ -1237,7 +1299,7 @@
             const items = orderedIds.map(id => state.artists.find(a => String(a.id) === id)).filter(Boolean);
             const prompt = items.map(a => {
                 const w = state.selected[String(a.id)];
-                return state.promptFormat === 'webui' ? (w===1 ? a.tag : `(${a.tag}:${w.toFixed(1)})`) : (w===1 ? a.tag : `${w.toFixed(1)}::${a.tag}::`);
+                return state.promptFormat === 'webui' ? (w===1 ? a.tag : `(${a.tag}:${w.toFixed(1)})`) : (w===1 ? a.tag : `${w.toFixed(1)}:: ${a.tag} ::`);
             }).join(', ');
             const isWebui = state.promptFormat === 'webui';
             const totalWeight = items.reduce((s, a) => s + (state.selected[String(a.id)] || 1), 0);
@@ -1305,10 +1367,11 @@
             }
 
             if(state.modal === 'add') {
-                const { name, tag, categories, imageUrl, danbooruCount } = state.formData;
+                const { name, tag, categories, imageUrl, danbooruCount, socialLinks } = state.formData;
                 const isEdit = !!state.editingId;
+                const socialLinksText = (socialLinks || []).join('\n');
                 const div = document.createElement('div');
-                div.innerHTML = `<div class="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"><div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="state.modal=null;renderModal()"></div><div class="bg-white dark:bg-slate-900 w-full max-w-lg rounded-3xl p-6 relative z-10 shadow-2xl overflow-hidden transform transition-all"><h2 class="text-xl font-bold mb-5 dark:text-white">${isEdit?'编辑画师':'添加画师'}</h2><div class="space-y-4"><div class="flex gap-4"><div class="flex-1"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">名称</label><input type="text" value="${name||''}" oninput="state.formData.name=this.value" class="w-full mt-1 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border-none text-sm dark:text-white focus:ring-2 focus:ring-indigo-500 transition-shadow"></div><div class="flex-1"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">Tag <span class="text-red-500">*</span></label><input type="text" value="${tag||''}" oninput="state.formData.tag=this.value" class="w-full mt-1 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border-none text-sm font-mono dark:text-white focus:ring-2 focus:ring-indigo-500 transition-shadow"></div></div><div><label class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">所属分类 (多选)</label><div id="modal-add-cat-scroll" class="flex flex-wrap gap-2 max-h-32 overflow-y-auto custom-scrollbar p-1">${state.categories.map(c => {const isActive = categories.includes(c);return `<button onclick="const arr=state.formData.categories; if(arr.includes('${c}')) state.formData.categories=arr.filter(x=>x!=='${c}'); else state.formData.categories.push('${c}'); renderModal();" class="px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${isActive ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-transparent hover:bg-slate-200'}">${c}</button>`;}).join('')}</div></div><div class="flex gap-4"><div class="flex-1"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">热度</label><input type="number" value="${danbooruCount||0}" oninput="state.formData.danbooruCount=this.value" class="w-full mt-1 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border-none text-sm dark:text-white focus:ring-2 focus:ring-indigo-500 transition-shadow"></div><div class="flex-[2]"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">封面</label><div onclick="document.getElementById('modal-file').click()" class="mt-1 h-12 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl flex items-center justify-center cursor-pointer relative overflow-hidden group hover:border-indigo-500 transition-colors">${imageUrl ? `<span class="text-xs text-green-500 font-bold">已选择图片 (点击更换)</span>` : `<span class="text-xs text-slate-400">点击上传封面</span>`}<input type="file" id="modal-file" class="hidden" accept="image/*" onchange="compressImage(this.files[0]).then(b64 => {state.formData.imageUrl=b64;renderModal()})"></div></div></div></div><div class="mt-8 flex gap-3"><button onclick="state.modal=null;renderModal()" class="flex-1 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">取消</button><button onclick="actions.saveArtist()" class="flex-1 py-3 rounded-xl font-bold bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition-colors">保存</button></div></div></div>`;
+                div.innerHTML = `<div class="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"><div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="state.modal=null;renderModal()"></div><div class="bg-white dark:bg-slate-900 w-full max-w-lg rounded-3xl p-6 relative z-10 shadow-2xl overflow-hidden transform transition-all max-h-[90vh] overflow-y-auto custom-scrollbar"><h2 class="text-xl font-bold mb-5 dark:text-white">${isEdit?'编辑画师':'添加画师'}</h2><div class="space-y-4"><div class="flex gap-4"><div class="flex-1"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">名称</label><input type="text" value="${name||''}" oninput="state.formData.name=this.value" class="w-full mt-1 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border-none text-sm dark:text-white focus:ring-2 focus:ring-indigo-500 transition-shadow"></div><div class="flex-1"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">Tag <span class="text-red-500">*</span></label><input type="text" value="${tag||''}" oninput="state.formData.tag=this.value" class="w-full mt-1 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border-none text-sm font-mono dark:text-white focus:ring-2 focus:ring-indigo-500 transition-shadow"></div></div><div><label class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">所属分类 (多选)</label><div id="modal-add-cat-scroll" class="flex flex-wrap gap-2 max-h-32 overflow-y-auto custom-scrollbar p-1">${state.categories.map(c => {const isActive = categories.includes(c);return `<button onclick="const arr=state.formData.categories; if(arr.includes('${c}')) state.formData.categories=arr.filter(x=>x!=='${c}'); else state.formData.categories.push('${c}'); renderModal();" class="px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${isActive ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-transparent hover:bg-slate-200'}">${c}</button>`;}).join('')}</div></div><div class="flex gap-4"><div class="flex-1"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">热度</label><input type="number" value="${danbooruCount||0}" oninput="state.formData.danbooruCount=this.value" class="w-full mt-1 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border-none text-sm dark:text-white focus:ring-2 focus:ring-indigo-500 transition-shadow"></div><div class="flex-[2]"><label class="text-xs font-bold text-slate-500 uppercase tracking-wider">封面</label><div onclick="document.getElementById('modal-file').click()" class="mt-1 h-12 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl flex items-center justify-center cursor-pointer relative overflow-hidden group hover:border-indigo-500 transition-colors">${imageUrl ? `<span class="text-xs text-green-500 font-bold">已选择图片 (点击更换)</span>` : `<span class="text-xs text-slate-400">点击上传封面</span>`}<input type="file" id="modal-file" class="hidden" accept="image/*" onchange="compressImage(this.files[0]).then(b64 => {state.formData.imageUrl=b64;renderModal()})"></div></div></div><div><label class="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">社交链接 <span class="text-[10px] text-slate-400 font-normal normal-case">每行一个 URL</span></label><textarea id="social-links-input" class="w-full mt-1 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border-none text-xs font-mono dark:text-white focus:ring-2 focus:ring-indigo-500 transition-shadow resize-none" rows="3" placeholder="https://twitter.com/...&#10;https://www.pixiv.net/users/...&#10;https://example.com/" oninput="state.formData.socialLinks=this.value.split('\n').map(s=>s.trim()).filter(Boolean)">${socialLinksText}</textarea>${socialLinks && socialLinks.length > 0 ? `<div class="flex gap-1 mt-1.5 flex-wrap">${socialLinks.map(u => `<a href="${u}" target="_blank" rel="noopener" class="social-link-icon" title="${u}">${getSocialIcon(u)}</a>`).join('')}</div>` : ''}</div></div><div class="mt-8 flex gap-3"><button onclick="state.modal=null;renderModal()" class="flex-1 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">取消</button><button onclick="actions.saveArtist()" class="flex-1 py-3 rounded-xl font-bold bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition-colors">保存</button></div></div></div>`;
                 container.appendChild(div);
                 const newAddCatScroll = document.getElementById('modal-add-cat-scroll');
                 if (newAddCatScroll) { newAddCatScroll.offsetHeight; newAddCatScroll.scrollTop = savedAddCatScroll; }
