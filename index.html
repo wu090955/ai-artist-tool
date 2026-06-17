@@ -102,6 +102,24 @@
         .dark .social-link-icon { background: rgba(129,140,248,0.15); color: #818cf8; }
         .dark .social-link-icon:hover { background: #818cf8; color: #0f172a; }
         .social-link-more { font-size: 9px; color: #94a3b8; font-weight: 700; margin-left: 2px; }
+        .db-progress-bar { height: 8px; border-radius: 99px; background: #e2e8f0; overflow: hidden; }
+        .dark .db-progress-bar { background: #334155; }
+        .db-progress-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #f97316, #f59e0b, #eab308); transition: width 0.3s ease; position: relative; overflow: hidden; }
+        .db-progress-fill::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent); animation: dbShimmer 1.5s infinite; }
+        @keyframes dbShimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+        .db-stat-card { display: flex; flex-direction: column; align-items: center; padding: 10px 4px; border-radius: 12px; flex: 1; min-width: 0; }
+        .db-stat-value { font-size: 20px; font-weight: 800; line-height: 1.2; }
+        .db-stat-label { font-size: 9px; color: #94a3b8; font-weight: 700; text-transform: uppercase; margin-top: 2px; }
+        .db-log-area { max-height: 140px; overflow-y: auto; font-size: 11px; font-family: 'Cascadia Code', 'Fira Code', monospace; padding: 10px 14px; border-radius: 12px; background: #f8fafc; color: #475569; line-height: 1.7; }
+        .dark .db-log-area { background: #0f172a; color: #64748b; }
+        @keyframes dbPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .db-pulse { animation: dbPulse 1.5s ease-in-out infinite; }
+        .db-mode-btn { flex: 1; padding: 8px 4px; border-radius: 10px; font-size: 12px; font-weight: 700; border: 2px solid transparent; transition: all 0.15s ease; cursor: pointer; }
+        .db-mode-btn.active { background: #6366f1; color: white; border-color: #6366f1; box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
+        .db-mode-btn:not(.active) { background: #f1f5f9; color: #64748b; }
+        .db-mode-btn:not(.active):hover { background: #e2e8f0; }
+        .dark .db-mode-btn:not(.active) { background: #1e293b; color: #94a3b8; }
+        .dark .db-mode-btn:not(.active):hover { background: #334155; }
     </style>
 </head>
 <body>
@@ -526,6 +544,14 @@
                 document.body.appendChild(a); a.click(); document.body.removeChild(a);
             },
 
+            openDanbooruUpdate: () => {
+                if (state.artists.length === 0) return showToast('请先导入画师数据');
+                state.modal = 'danbooru-update';
+                state.formData = { dbMode: 'incremental' };
+                state.dbUpdateRunning = false;
+                renderModal();
+            },
+
             openEdit: async (id) => {
                 id = String(id);
                 const a = state.artists.find(x => String(x.id)===id);
@@ -818,6 +844,197 @@
 
         const renderAll = () => { renderSidebarLeft(); renderMainHeader(); renderGrid(); renderSidebarRight(); };
 
+        // =========================================
+        // 7. Danbooru Data Fetcher (Browser-side)
+        // =========================================
+        const danbooruFetcher = (() => {
+            const API = 'https://danbooru.donmai.us';
+            const MAX_RETRIES = 2;
+            const RETRY_DELAY = 3000;
+            let _cancelled = false, _running = false, _abort = null;
+
+            class RateLimiter {
+                constructor(r) { this.rate = r; this.tokens = r; this.last = performance.now(); }
+                async acquire() {
+                    while (true) {
+                        const now = performance.now();
+                        this.tokens = Math.min(this.rate, this.tokens + (now - this.last) / 1000 * this.rate);
+                        this.last = now;
+                        if (this.tokens >= 1) { this.tokens--; return; }
+                        await new Promise(r => setTimeout(r, 60));
+                    }
+                }
+            }
+            let limiter = new RateLimiter(3);
+
+            const normalize = (tag) => tag.trim().replace(/^,?\s*a?rt?ist:\s*/i, '').replace(/ /g, '_').toLowerCase().replace(/_+/g, '_').replace(/^_|_$/g, '');
+
+            const _fetch = async (url, signal) => {
+                await limiter.acquire();
+                const r = await fetch(url, { headers: { Accept: 'application/json' }, signal });
+                if (!r.ok) { const e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+                return r.json();
+            };
+
+            const _req = async (url, signal) => {
+                for (let i = 0; i < MAX_RETRIES; i++) {
+                    try { return [await _fetch(url, signal), null]; }
+                    catch (e) {
+                        if (e.name === 'AbortError') return [null, 'cancelled'];
+                        if (e.status === 429) { await new Promise(r => setTimeout(r, RETRY_DELAY * (i + 2))); continue; }
+                        if (i < MAX_RETRIES - 1) await new Promise(r => setTimeout(r, RETRY_DELAY));
+                        else return [null, e.message || 'error'];
+                    }
+                }
+                return [null, 'max_retries'];
+            };
+
+            const getCount = async (tag, signal) => {
+                const n = normalize(tag);
+                if (!n) return [0, null, 'empty'];
+                let [d, e] = await _req(API + '/tags.json?search[name]=' + encodeURIComponent(n) + '&search[category]=1&limit=1', signal);
+                if (e) return [0, null, 'error:' + e];
+                if (d && d.length > 0) return [d[0].post_count, d[0].name, 'artist'];
+                [d, e] = await _req(API + '/tags.json?search[name]=' + encodeURIComponent(n) + '&limit=1', signal);
+                if (e) return [0, null, 'error:' + e];
+                if (d && d.length > 0) return [d[0].post_count, d[0].name, 'any'];
+                return [0, null, 'not_found'];
+            };
+
+            const getUrls = async (tag, signal) => {
+                const n = normalize(tag);
+                if (!n) return [[], null];
+                let [ad, e1] = await _req(API + '/artists.json?search[name]=' + encodeURIComponent(n) + '&limit=1', signal);
+                if (e1) return [null, e1];
+                if (!ad || !ad.length || !ad[0] || !ad[0].id) return [[], null];
+                let [ud, e2] = await _req(API + '/artist_urls.json?search[artist_id]=' + ad[0].id, signal);
+                if (e2) return [null, e2];
+                if (!ud) return [[], null];
+                const seen = new Set(), out = [];
+                for (const it of ud) {
+                    const u = typeof it === 'string' ? it : (it && it.is_active !== false ? it.url : null);
+                    if (u) { const k = u.trim().replace(/\/+$/, ''); if (!seen.has(k)) { seen.add(k); out.push(u.trim()); } }
+                }
+                return [out, null];
+            };
+
+            const pool = async (limit, items, fn) => {
+                const exec = new Set();
+                for (let i = 0; i < items.length; i++) {
+                    if (_cancelled) break;
+                    const p = fn(items[i], i).finally(() => exec.delete(p));
+                    exec.add(p);
+                    if (exec.size >= limit) await Promise.race(exec);
+                }
+                if (exec.size > 0) await Promise.allSettled([...exec]);
+            };
+
+            const start = async (opts) => {
+                if (_running) return;
+                _running = true; _cancelled = false;
+                _abort = new AbortController();
+                const o = opts || {};
+                const force = !!o.force, skipUrls = !!o.skipUrls, urlsOnly = !!o.urlsOnly;
+                const rate = o.rateLimit || 3, conc = o.concurrency || 3;
+                const onProg = o.onProgress || function(){}, onLog = o.onLog || function(){}, onDone = o.onComplete || function(){};
+                limiter = new RateLimiter(rate);
+                const sig = _abort.signal, arts = state.artists, todo = [];
+
+                if (force) {
+                    for (let i = 0; i < arts.length; i++) todo.push({ i: i, a: arts[i], m: 'full' });
+                    onLog('\u5f3a\u5236\u6a21\u5f0f\uff1a\u5168\u90e8 ' + arts.length + ' \u4f4d\u753b\u5e08');
+                } else if (urlsOnly) {
+                    for (let i = 0; i < arts.length; i++) if ((arts[i].danbooruCount||0)>0 && (!arts[i].socialLinks||!arts[i].socialLinks.length)) todo.push({ i: i, a: arts[i], m: 'urls' });
+                    onLog('\u8865\u6293\u94fe\u63a5\uff1a' + todo.length + ' \u4f4d');
+                } else {
+                    for (let i = 0; i < arts.length; i++) {
+                        if (!(arts[i].danbooruCount > 0)) todo.push({ i: i, a: arts[i], m: 'full' });
+                        else if (!skipUrls && (!arts[i].socialLinks||!arts[i].socialLinks.length)) todo.push({ i: i, a: arts[i], m: 'urls' });
+                    }
+                    onLog('\u9700\u66f4\u65b0: ' + todo.length + ' / ' + arts.length);
+                }
+                if (!todo.length) { onLog('\u2705 \u6240\u6709\u6570\u636e\u5df2\u662f\u6700\u65b0'); onDone({ done:0, found:0, notFound:0, error:0, total:0 }); _running = false; return; }
+                const s = { done:0, found:0, notFound:0, error:0, total:todo.length, t0:performance.now() };
+                onLog('\u5f00\u59cb (\u5e76\u53d1=' + conc + ', \u901f\u7387=' + rate + '/s)');
+                let saveN = 0;
+                await pool(conc, todo, async (item) => {
+                    if (_cancelled) return;
+                    const tag = item.a.tag || '';
+                    if (!tag.trim()) { s.done++; onProg(s, ''); return; }
+                    try {
+                        if (item.m === 'urls') {
+                            const [urls, err] = await getUrls(tag, sig);
+                            if (!err && urls) { state.artists[item.i].socialLinks = urls; urls.length ? s.found++ : s.notFound++; } else s.error++;
+                        } else {
+                            const [cnt,,mth] = await getCount(tag, sig);
+                            if (cnt > 0) {
+                                state.artists[item.i].danbooruCount = cnt; s.found++;
+                                if (!skipUrls) { const [urls, err] = await getUrls(tag, sig); if (!err && urls) state.artists[item.i].socialLinks = urls; }
+                            } else if (mth && mth.indexOf('error') >= 0) s.error++;
+                            else s.notFound++;
+                        }
+                    } catch(e) { if (e.name !== 'AbortError') s.error++; }
+                    s.done++; saveN++;
+                    onProg(s, tag);
+                    if (saveN % 20 === 0) { actions.saveMeta(); onLog('\ud83d\udcbe \u5df2\u4fdd\u5b58 (' + s.done + '/' + s.total + ')'); }
+                });
+                actions.saveMeta(); _running = false;
+                if (_cancelled) onLog('\u26a0\ufe0f \u5df2\u53d6\u6d88 (' + s.done + '/' + s.total + ')\uff0c\u6570\u636e\u5df2\u4fdd\u5b58');
+                else onLog('\u2705 \u5b8c\u6210! \u5339\u914d:' + s.found + ' \u672a\u627e\u5230:' + s.notFound + ' \u9519\u8bef:' + s.error);
+                onDone(s);
+            };
+
+            return {
+                normalize, getCount, getUrls, start,
+                cancel: function() { _cancelled = true; if (_abort) _abort.abort(); },
+                isRunning: function() { return _running; }
+            };
+        })();
+
+        // Danbooru Update UI helpers
+        const dbSetMode = (m) => {
+            state.formData.dbMode = m;
+            document.querySelectorAll('.db-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+        };
+
+        const dbStartUpdate = () => {
+            const cfg = document.getElementById('db-config'), prog = document.getElementById('db-progress'), logs = document.getElementById('db-logs');
+            const cancelBtn = document.getElementById('db-cancel-btn'), closeBtn = document.getElementById('db-close-btn');
+            if (!cfg) return;
+            state.dbUpdateRunning = true;
+            cfg.style.display = 'none'; prog.style.display = 'block'; logs.style.display = 'block'; logs.innerHTML = '';
+            cancelBtn.style.display = 'block'; closeBtn.style.display = 'none';
+            const mode = state.formData.dbMode || 'incremental';
+            const skipUrls = !!(document.getElementById('db-skip-urls') && document.getElementById('db-skip-urls').checked);
+            const rate = parseInt(document.getElementById('db-rate') ? document.getElementById('db-rate').value : '3') || 3;
+            const addLog = (msg) => { const t = new Date().toLocaleTimeString('zh-CN',{hour12:false}); logs.innerHTML += '<div>['+t+'] '+msg+'</div>'; logs.scrollTop = logs.scrollHeight; };
+            const updProg = (s, tag) => {
+                const pct = s.total ? s.done/s.total*100 : 0, el = (id) => document.getElementById(id);
+                const sec = (performance.now()-s.t0)/1000, spd = sec>0?s.done/sec:0, eta = spd>0?(s.total-s.done)/spd:0;
+                const etaS = eta<60?Math.round(eta)+'s':Math.floor(eta/60)+'m'+Math.round(eta%60)+'s';
+                const f=el('db-progress-fill'); if(f) f.style.width=pct.toFixed(1)+'%';
+                const t=el('db-progress-text'); if(t) t.textContent=pct.toFixed(1)+'% ('+s.done+'/'+s.total+')';
+                const o=el('db-stat-ok'); if(o) o.textContent=s.found;
+                const m=el('db-stat-miss'); if(m) m.textContent=s.notFound;
+                const e=el('db-stat-err'); if(e) e.textContent=s.error;
+                const sp=el('db-stat-speed'); if(sp) sp.textContent=spd.toFixed(1);
+                const ea=el('db-eta'); if(ea) ea.textContent='\u23f1 ETA '+etaS+' \u00b7 \u5df2\u7528 '+Math.round(sec)+'s';
+                const c=el('db-current'); if(c) c.textContent=tag||'';
+            };
+            danbooruFetcher.start({
+                force: mode==='force', skipUrls: skipUrls, urlsOnly: mode==='urls_only',
+                rateLimit: rate, concurrency: Math.min(rate+1, 5),
+                onProgress: updProg, onLog: addLog,
+                onComplete: (s) => {
+                    state.dbUpdateRunning = false;
+                    if(cancelBtn) cancelBtn.style.display = 'none';
+                    if(closeBtn) closeBtn.style.display = 'block';
+                    const f = document.getElementById('db-progress-fill');
+                    if(f && s.done >= s.total) f.style.background = 'linear-gradient(90deg, #22c55e, #16a34a)';
+                }
+            });
+        };
+
         const renderAppStructure = () => {
             const app = document.getElementById('app');
             app.innerHTML = `
@@ -868,6 +1085,7 @@
                             <button onclick="actions.exportData()" class="flex-1 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 dark:text-slate-400">导出</button>
                             <input type="file" id="file-in" class="hidden" accept=".json" onchange="actions.importData(this.files[0]);this.value=''">
                         </div>
+                        <button onclick="actions.openDanbooruUpdate()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 text-white text-xs font-bold hover:from-orange-600 hover:to-amber-600 transition-all flex items-center justify-center gap-1.5 shadow-md shadow-orange-500/20 active:scale-[0.97]"><i data-lucide="zap" class="w-3.5 h-3.5"></i> 更新数据</button>
                     ` : ''}
                 </div>
                 ${!isPresetMode ? `
@@ -1328,6 +1546,7 @@
 
         const renderModal = () => {
             const container = document.getElementById('modal-container');
+            if (state.dbUpdateRunning) return;
             
             // Save scroll positions before resetting innerHTML
             const batchScroll = document.getElementById('modal-batch-cat-scroll');
@@ -1363,6 +1582,17 @@
                 container.appendChild(div);
                 const newEditPresetScroll = document.getElementById('modal-edit-preset-scroll');
                 if (newEditPresetScroll) { newEditPresetScroll.offsetHeight; newEditPresetScroll.scrollTop = savedEditPresetScroll; }
+                return;
+            }
+
+            if(state.modal === 'danbooru-update') {
+                const div = document.createElement('div');
+                const mode = (state.formData && state.formData.dbMode) || 'incremental';
+                const noCount = state.artists.filter(a => !(a.danbooruCount > 0)).length;
+                const noUrls = state.artists.filter(a => (a.danbooruCount > 0) && (!a.socialLinks || !a.socialLinks.length)).length;
+                div.innerHTML = `<div class="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"><div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="if(!danbooruFetcher.isRunning()){state.modal=null;renderModal()}"></div><div class="bg-white dark:bg-slate-900 w-full max-w-lg rounded-3xl p-6 relative z-10 shadow-2xl max-h-[85vh] overflow-y-auto custom-scrollbar"><h2 class="text-xl font-bold mb-4 dark:text-white flex items-center gap-2"><i data-lucide="zap" class="w-5 h-5 text-amber-500"></i> Danbooru \u6570\u636e\u66f4\u65b0</h2><div class="mb-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700/30 text-xs text-amber-700 dark:text-amber-300 flex items-start gap-2"><i data-lucide="shield-alert" class="w-4 h-4 mt-0.5 flex-shrink-0"></i><span>\u4f7f\u7528\u6b64\u529f\u80fd\u9700\u8981<b>\u5f00\u542f VPN</b> \u8bbf\u95ee Danbooru API\uff0c\u5426\u5219\u65e0\u6cd5\u6b63\u5e38\u8fd0\u884c\u3002\u8bf7\u786e\u4fdd\u53ef\u8fde\u63a5 danbooru.donmai.us</span></div><div id="db-config" class="space-y-4"><div><label class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">\u66f4\u65b0\u6a21\u5f0f</label><div class="flex gap-2"><button class="db-mode-btn ${mode==='incremental'?'active':''}" data-mode="incremental" onclick="dbSetMode('incremental')"\u003e\u4ec5\u672a\u66f4\u65b0</button><button class="db-mode-btn ${mode==='force'?'active':''}" data-mode="force" onclick="dbSetMode('force')">\u5168\u90e8\u66f4\u65b0</button><button class="db-mode-btn ${mode==='urls_only'?'active':''}" data-mode="urls_only" onclick="dbSetMode('urls_only')">\u4ec5\u8865\u94fe\u63a5</button></div></div><label class="flex items-center gap-2 cursor-pointer group"><input type="checkbox" id="db-skip-urls" class="w-4 h-4 accent-indigo-600 rounded"><span class="text-sm text-slate-600 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white transition-colors">\u4e0d\u6293\u53d6\u793e\u4ea4\u94fe\u63a5 (\u4ec5\u66f4\u65b0\u70ed\u5ea6)</span></label><div><label class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">\u901f\u7387: <span id="db-rate-display" class="text-indigo-600 dark:text-indigo-400">3</span> \u8bf7\u6c42/\u79d2</label><input type="range" id="db-rate" min="1" max="6" value="3" oninput="document.getElementById('db-rate-display').textContent=this.value" class="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-600"><div class="flex justify-between text-[10px] text-slate-400 mt-1"><span>\u6162 (\u7a33\u5b9a)</span><span>\u5feb (\u53ef\u80fd\u89e6\u53d1\u9650\u6d41)</span></div></div><div class="pt-3 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-400 dark:text-slate-500 flex gap-3 flex-wrap"><span>\u5171 ${state.artists.length} \u4f4d\u753b\u5e08</span><span>\u672a\u66f4\u65b0\u70ed\u5ea6: <b class="text-orange-500">${noCount}</b></span><span>\u7f3a\u793e\u4ea4\u94fe\u63a5: <b class="text-blue-500">${noUrls}</b></span></div><button onclick="dbStartUpdate()" class="w-full py-3 rounded-xl font-bold bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/25 hover:shadow-orange-500/40 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm mt-4"><i data-lucide="rocket" class="w-4 h-4"></i> \u5f00\u59cb\u66f4\u65b0</button></div><div id="db-progress" style="display:none" class="space-y-4"><div class="db-progress-bar"><div id="db-progress-fill" class="db-progress-fill" style="width:0%"></div></div><div id="db-progress-text" class="text-center text-sm font-bold text-slate-600 dark:text-slate-300">0% (0/0)</div><div class="flex gap-2 mt-2"><div class="db-stat-card bg-green-50 dark:bg-green-900/20"><span id="db-stat-ok" class="db-stat-value text-green-500">0</span><span class="db-stat-label">\u5339\u914d</span></div><div class="db-stat-card bg-slate-50 dark:bg-slate-800/50"><span id="db-stat-miss" class="db-stat-value text-slate-400">0</span><span class="db-stat-label">\u672a\u627e\u5230</span></div><div class="db-stat-card bg-red-50 dark:bg-red-900/20"><span id="db-stat-err" class="db-stat-value text-red-400">0</span><span class="db-stat-label">\u9519\u8bef</span></div><div class="db-stat-card bg-indigo-50 dark:bg-indigo-900/20"><span id="db-stat-speed" class="db-stat-value text-indigo-500">0</span><span class="db-stat-label">\u901f\u5ea6/s</span></div></div><div class="flex justify-between text-xs text-slate-500 dark:text-slate-400 mt-1"><span id="db-eta">\u23f1 ETA: --</span><span id="db-current" class="truncate ml-4 text-right db-pulse max-w-[180px]"></span></div></div><div id="db-logs" class="db-log-area mt-4" style="display:none"></div><div class="mt-5 flex gap-3"><button id="db-cancel-btn" onclick="danbooruFetcher.cancel()" style="display:none" class="flex-1 py-3 rounded-xl font-bold text-red-500 border border-red-200 dark:border-red-900/30 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">\u53d6\u6d88\u66f4\u65b0</button><button id="db-close-btn" onclick="state.modal=null;renderModal();renderAll()" class="flex-1 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">\u5173\u95ed</button></div></div></div>`;
+                container.appendChild(div);
+                lucide.createIcons(div);
                 return;
             }
 
